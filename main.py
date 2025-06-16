@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import datetime
 import matplotlib.pyplot as plt
 from binance.client import Client
 from ta.momentum import RSIIndicator, StochRSIIndicator
 
-# Настройки Binance (без ключей)
+# Binance API
 client = Client()
 
-# Пары для анализа
+# Константы
 PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"]
 SYMBOL_NAMES = {
     "BTCUSDT": "BTC/USDT",
@@ -17,17 +16,17 @@ SYMBOL_NAMES = {
     "SOLUSDT": "SOL/USDT",
     "PAXGUSDT": "PAXG/USDT"
 }
-TIMEFRAME = "1h"
+TIMEFRAMES = ["15m", "1h", "4h", "1d"]
 LIMIT = 150
 
-# Интерфейс
-st.set_page_config(page_title="Crypto Signals", layout="wide")
-st.title("📈 Крипто-сигналы (Binance)")
-st.markdown("Получай простые технические сигналы по ключевым парам.")
+# Заголовок
+st.title("📊 Крипто-сигналы (Binance)")
 
-refresh = st.button("🔄 Обновить сигналы")
+# Панель управления
+selected_tf = st.selectbox("Выберите таймфрейм:", TIMEFRAMES, index=1)
+hide_neutral = st.checkbox("Скрыть нейтральные сигналы")
 
-# Получение исторических данных
+# Получение данных с Binance
 def get_binance_data(symbol, interval="1h", limit=150):
     try:
         klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
@@ -40,71 +39,69 @@ def get_binance_data(symbol, interval="1h", limit=150):
         df.set_index("Open Time", inplace=True)
         df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
         return df
-    except Exception as e:
+    except Exception:
         return None
 
-# Анализ пары
+# Анализ сигналов
 def analyze(df, symbol):
-    try:
-        stoch = StochRSIIndicator(close=df["Close"])
-        df["StochRSI"] = stoch.stochrsi()
+    rsi = RSIIndicator(close=df["Close"])
+    df["RSI"] = rsi.rsi()
 
-        rsi = RSIIndicator(close=df["Close"])
-        df["RSI"] = rsi.rsi()
+    stoch = StochRSIIndicator(close=df["Close"])
+    df["StochRSI"] = stoch.stochrsi()
 
-        df.dropna(inplace=True)
-        last = df.iloc[-1]
+    df.dropna(inplace=True)
+    last = df.iloc[-1]
 
-        signal = "⏸️ Нейтрально"
-        if last["RSI"] < 30 and last["StochRSI"] < 0.2:
-            signal = "✅ LONG"
-        elif last["RSI"] > 70 and last["StochRSI"] > 0.8:
-            signal = "🔻 SHORT"
+    signal = "⏸️ Нейтрально"
+    bgcolor = "#f0f0f0"
+    if last["RSI"] < 30 and last["StochRSI"] < 0.2:
+        signal = "🟩 ✅ LONG"
+        bgcolor = "#d4f4dd"
+    elif last["RSI"] > 70 and last["StochRSI"] > 0.8:
+        signal = "🟥 🔻 SHORT"
+        bgcolor = "#f8d2d2"
 
-        entry_price = round(last["Close"], 2)
-        stop_loss = round(entry_price * (0.97 if signal == "✅ LONG" else 1.03), 2)
-        take_profit = round(entry_price * (1.03 if signal == "✅ LONG" else 0.97), 2)
+    if hide_neutral and "Нейтрально" in signal:
+        return
 
-        # График цены и StochRSI
-        fig, ax1 = plt.subplots(figsize=(7, 4))
-        ax2 = ax1.twinx()
+    entry_price = round(last["Close"], 2)
+    stop_loss = round(entry_price * (0.97 if "LONG" in signal else 1.03), 2)
+    take_profit = round(entry_price * (1.03 if "LONG" in signal else 0.97), 2)
 
-        df["Close"].plot(ax=ax1, color="black", label="Цена")
-        df["StochRSI"].plot(ax=ax2, color="purple", label="StochRSI", alpha=0.6)
+    # Блок сигнала
+    with st.container():
+        st.markdown(f"## {SYMBOL_NAMES[symbol]} ({selected_tf})")
+        st.markdown(
+            f"""
+            <div style="background-color:{bgcolor};padding:10px;border-radius:10px;">
+                <b>{signal}</b><br>
+                ⏱️ Время: {df.index[-1]}<br>
+                💰 Вход: {entry_price}<br>
+                📍 Стоп: {stop_loss} 🎯 Тейк: {take_profit}
+            </div>
+            """, unsafe_allow_html=True
+        )
 
+        # График: цена + Stoch RSI
+        fig, ax1 = plt.subplots(figsize=(7, 3))
+        ax1.plot(df.index, df["Close"], color="black", label="Цена")
         ax1.set_ylabel("Цена", color="black")
-        ax2.set_ylabel("StochRSI", color="purple")
-        ax2.axhline(0.8, color='red', linestyle='--', linewidth=1)
-        ax2.axhline(0.2, color='green', linestyle='--', linewidth=1)
+
+        ax2 = ax1.twinx()
+        ax2.plot(df.index, df["StochRSI"], color="purple", alpha=0.5, label="StochRSI")
+        ax2.set_ylabel("Stoch RSI", color="purple")
         ax2.set_ylim(0, 1)
 
-        lines, labels = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines + lines2, labels + labels2, loc='upper left')
-        ax1.grid(True)
-        ax1.set_title(f"{SYMBOL_NAMES[symbol]} — Цена и Stoch RSI")
-
-        # Вывод
+        fig.suptitle(f"{SYMBOL_NAMES[symbol]} — Цена и Stoch RSI")
+        fig.tight_layout()
         st.pyplot(fig)
-        with st.container():
-            st.markdown(f"### {SYMBOL_NAMES[symbol]}")
-            st.markdown(f"""
-            **{signal}**  
-            ⏱️ Время сигнала: `{df.index[-1]}`  
-            💰 Цена входа: `{entry_price}`  
-            📍 Стоп-лосс: `{stop_loss}`  
-            🎯 Тейк-профит: `{take_profit}`
-            """)
-    except Exception as e:
-        st.markdown(f"### {SYMBOL_NAMES[symbol]}")
-        st.error(f"Ошибка: {e}")
 
-# Основной вывод
-if refresh or True:
-    for pair in PAIRS:
-        df = get_binance_data(pair, interval=TIMEFRAME, limit=LIMIT)
-        if df is None or len(df) < 60:
-            st.markdown(f"### {SYMBOL_NAMES[pair]}")
-            st.error("❌ Недостаточно данных")
-        else:
-            analyze(df, pair)
+# Основной цикл
+for pair in PAIRS:
+    df = get_binance_data(pair, interval=selected_tf, limit=LIMIT)
+    if df is not None and len(df) >= 60:
+        analyze(df, pair)
+    else:
+        st.markdown(f"## {SYMBOL_NAMES[pair]}")
+        st.error("❌ Недостаточно данных")
