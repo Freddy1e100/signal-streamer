@@ -2,106 +2,107 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import mplfinance as mpf
 from binance.client import Client
-from ta.momentum import RSIIndicator, StochRSIIndicator
+from ta.momentum import StochRSIIndicator
+import datetime
 
-# Binance API
+# Binance API — public
 client = Client()
 
-# Константы
-PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"]
-SYMBOL_NAMES = {
-    "BTCUSDT": "BTC/USDT",
-    "ETHUSDT": "ETH/USDT",
-    "SOLUSDT": "SOL/USDT",
-    "PAXGUSDT": "PAXG/USDT"
+# Настройки интерфейса
+st.set_page_config(page_title="Crypto Signals", layout="wide")
+st.title("📈 Крипто сигналы")
+
+# Выбор таймфрейма
+timeframe = st.selectbox("Выберите таймфрейм", ["1h", "4h", "1d"])
+interval_map = {
+    "1h": Client.KLINE_INTERVAL_1HOUR,
+    "4h": Client.KLINE_INTERVAL_4HOUR,
+    "1d": Client.KLINE_INTERVAL_1DAY,
 }
-TIMEFRAMES = ["15m", "1h", "4h", "1d"]
-LIMIT = 150
 
-# Заголовок
-st.title("📊 Крипто-сигналы (Binance)")
+# Кнопка обновления
+if st.button("🔄 Обновить данные"):
+    st.experimental_rerun()
 
-# Панель управления
-selected_tf = st.selectbox("Выберите таймфрейм:", TIMEFRAMES, index=1)
-hide_neutral = st.checkbox("Скрыть нейтральные сигналы")
+# Показывать ли нейтральные сигналы
+show_neutral = st.checkbox("Показывать нейтральные сигналы", value=True)
 
-# Получение данных с Binance
-def get_binance_data(symbol, interval="1h", limit=150):
-    try:
-        klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
-        df = pd.DataFrame(klines, columns=[
-            "Open Time", "Open", "High", "Low", "Close", "Volume",
-            "Close Time", "Quote Asset Volume", "Number of Trades",
-            "Taker Buy Base", "Taker Buy Quote", "Ignore"
-        ])
-        df["Open Time"] = pd.to_datetime(df["Open Time"], unit="ms")
-        df.set_index("Open Time", inplace=True)
-        df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
-        return df
-    except Exception:
-        return None
+# Пары для анализа
+symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"]
 
-# Анализ сигналов
-def analyze(df, symbol):
-    rsi = RSIIndicator(close=df["Close"])
-    df["RSI"] = rsi.rsi()
+def get_data(symbol, interval, lookback="100"):
+    klines = client.get_klines(symbol=symbol, interval=interval, limit=int(lookback))
+    df = pd.DataFrame(klines, columns=[
+        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+        'close_time', 'quote_asset_volume', 'number_of_trades',
+        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+    ])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    df = df.astype(float)
+    return df
 
-    stoch = StochRSIIndicator(close=df["Close"])
-    df["StochRSI"] = stoch.stochrsi()
+def analyze(df):
+    stoch_rsi = StochRSIIndicator(df['close'], window=14, smooth1=3, smooth2=3)
+    df['stoch_rsi'] = stoch_rsi.stochrsi_k()
+    latest = df.iloc[-1]
+    signal = "Нейтрально"
+    if latest['stoch_rsi'] < 0.2:
+        signal = "LONG"
+    elif latest['stoch_rsi'] > 0.8:
+        signal = "SHORT"
+    return signal, latest
 
-    df.dropna(inplace=True)
-    last = df.iloc[-1]
+def plot_chart(df, symbol):
+    fig, ax1 = plt.subplots(figsize=(10, 4))
 
-    signal = "⏸️ Нейтрально"
-    bgcolor = "#f0f0f0"
-    if last["RSI"] < 30 and last["StochRSI"] < 0.2:
-        signal = "🟩 ✅ LONG"
-        bgcolor = "#d4f4dd"
-    elif last["RSI"] > 70 and last["StochRSI"] > 0.8:
-        signal = "🟥 🔻 SHORT"
-        bgcolor = "#f8d2d2"
+    ax1.set_title(f"{symbol} — Цена и Stoch RSI")
+    ax1.plot(df.index, df['close'], label='Цена', color='black')
+    ax1.set_ylabel("Цена")
 
-    if hide_neutral and "Нейтрально" in signal:
-        return
+    ax2 = ax1.twinx()
+    ax2.plot(df.index, df['stoch_rsi'], label='Stoch RSI', color='purple', alpha=0.6)
+    ax2.set_ylabel("Stoch RSI", color='purple')
+    ax2.tick_params(axis='y', labelcolor='purple')
+    ax2.set_ylim(0, 1)
 
-    entry_price = round(last["Close"], 2)
-    stop_loss = round(entry_price * (0.97 if "LONG" in signal else 1.03), 2)
-    take_profit = round(entry_price * (1.03 if "LONG" in signal else 0.97), 2)
+    fig.tight_layout()
+    return fig
 
-    # Блок сигнала
+# Основной цикл по валютным парам
+for symbol in symbols:
+    df = get_data(symbol, interval_map[timeframe])
+    signal, latest = analyze(df)
+
+    if not show_neutral and signal == "Нейтрально":
+        continue
+
+    # Отображение блока сигнала
+    st.subheader(f"{symbol.replace('USDT', '')}/USDT ({timeframe})")
+
+    if signal == "LONG":
+        bg_color = "#d1f7c4"
+        emoji = "🟢"
+    elif signal == "SHORT":
+        bg_color = "#f8c4c4"
+        emoji = "🔴"
+    else:
+        bg_color = "#eeeeee"
+        emoji = "⏸️"
+
     with st.container():
-        st.markdown(f"## {SYMBOL_NAMES[symbol]} ({selected_tf})")
         st.markdown(
             f"""
-            <div style="background-color:{bgcolor};padding:10px;border-radius:10px;">
-                <b>{signal}</b><br>
-                ⏱️ Время: {df.index[-1]}<br>
-                💰 Вход: {entry_price}<br>
-                📍 Стоп: {stop_loss} 🎯 Тейк: {take_profit}
+            <div style="background-color:{bg_color}; padding:10px; border-radius:10px">
+            <h4>{emoji} <b>{signal}</b></h4>
+            <p>⏰ Время: {latest.name.strftime('%Y-%m-%d %H:%M:%S')}<br>
+            💰 Вход: {latest['close']:.2f}<br>
+            📍 Стоп: {latest['close']*1.03:.2f} 🎯 Тейк: {latest['close']*0.97:.2f}</p>
             </div>
-            """, unsafe_allow_html=True
+            """,
+            unsafe_allow_html=True,
         )
 
-        # График: цена + Stoch RSI
-        fig, ax1 = plt.subplots(figsize=(7, 3))
-        ax1.plot(df.index, df["Close"], color="black", label="Цена")
-        ax1.set_ylabel("Цена", color="black")
-
-        ax2 = ax1.twinx()
-        ax2.plot(df.index, df["StochRSI"], color="purple", alpha=0.5, label="StochRSI")
-        ax2.set_ylabel("Stoch RSI", color="purple")
-        ax2.set_ylim(0, 1)
-
-        fig.suptitle(f"{SYMBOL_NAMES[symbol]} — Цена и Stoch RSI")
-        fig.tight_layout()
-        st.pyplot(fig)
-
-# Основной цикл
-for pair in PAIRS:
-    df = get_binance_data(pair, interval=selected_tf, limit=LIMIT)
-    if df is not None and len(df) >= 60:
-        analyze(df, pair)
-    else:
-        st.markdown(f"## {SYMBOL_NAMES[pair]}")
-        st.error("❌ Недостаточно данных")
+    st.pyplot(plot_chart(df, symbol))
