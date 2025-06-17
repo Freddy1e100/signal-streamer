@@ -102,7 +102,7 @@ for symbol, name in PAIRS.items():
     )
 
     # График
-    def plot_chart(df, name):
+def plot_chart(df, name):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
     
     # Цена
@@ -122,4 +122,4 @@ for symbol, name in PAIRS.items():
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    st.pyplot(fig)
+    st.pyplot(fig)    
