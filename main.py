@@ -3,20 +3,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from binance.client import Client
-from ta.trend import EMAIndicator
-from ta.momentum import RSIIndicator, StochRSIIndicator
+from ta.momentum import StochRSIIndicator, RSIIndicator
+from datetime import datetime
 
-# Binance API без ключей
+# Binance без API-ключей
 client = Client()
 
-# Доступные таймфреймы Binance
-TIMEFRAMES = {
-    "15 минут": "15m",
-    "1 час": "1h",
-    "4 часа": "4h",
-    "1 день": "1d"
-}
-
+# Настройки
 PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"]
 SYMBOL_NAMES = {
     "BTCUSDT": "BTC/USDT",
@@ -24,24 +17,30 @@ SYMBOL_NAMES = {
     "SOLUSDT": "SOL/USDT",
     "PAXGUSDT": "PAXG/USDT"
 }
+TIMEFRAMES = {
+    "15m": "15m",
+    "1 час": "1h",
+    "4 часа": "4h",
+    "1 день": "1d"
+}
 
-# === SIDEBAR НАСТРОЙКИ ===
-st.sidebar.header("⚙️ Настройки")
-timeframe_name = st.sidebar.selectbox("⏱️ Таймфрейм", list(TIMEFRAMES.keys()), index=1)
-TIMEFRAME = TIMEFRAMES[timeframe_name]
-stop_pct = st.sidebar.slider("📉 Стоп-лосс %", min_value=1, max_value=10, value=3)
-take_pct = st.sidebar.slider("🎯 Тейк-профит %", min_value=1, max_value=10, value=3)
-hide_neutral = st.sidebar.checkbox("Скрыть нейтральные сигналы", value=False)
+# Интерфейс
+st.set_page_config(layout="wide")
+st.title("📈 Crypto Signal Streamer")
+st.markdown("Получай сигналы на основе StochRSI по основным крипто-парам.")
 
-# === ЗАГОЛОВОК ===
-st.title("📡 Signal Streamer")
-st.markdown("Анализ сигналов по ключевым крипто-парам на основе технических индикаторов.")
+# Пользовательские параметры
+selected_tf = st.sidebar.selectbox("Выбери таймфрейм", list(TIMEFRAMES.keys()))
+stop_pct = st.sidebar.number_input("Стоп-лосс (%)", value=3.0, step=0.5)
+take_pct = st.sidebar.number_input("Тейк-профит (%)", value=3.0, step=0.5)
+show_neutral = st.sidebar.checkbox("Показывать нейтральные", value=True)
+update_btn = st.sidebar.button("🔄 Обновить данные")
 
-# === ФУНКЦИЯ ДАННЫХ ===
-def get_binance_data(symbol, interval="1h", limit=150):
+# Получение данных с Binance
+def get_data(symbol, interval="1h", limit=150):
     try:
-        klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
-        df = pd.DataFrame(klines, columns=[
+        raw = client.get_klines(symbol=symbol, interval=interval, limit=limit)
+        df = pd.DataFrame(raw, columns=[
             "Open Time", "Open", "High", "Low", "Close", "Volume",
             "Close Time", "Quote Asset Volume", "Number of Trades",
             "Taker Buy Base", "Taker Buy Quote", "Ignore"
@@ -53,77 +52,70 @@ def get_binance_data(symbol, interval="1h", limit=150):
     except Exception as e:
         return None
 
-# === АНАЛИЗ И ВИЗУАЛИЗАЦИЯ ===
+# Анализ StochRSI
 def analyze(df, symbol):
     try:
-        df["EMA"] = EMAIndicator(close=df["Close"], window=50).ema_indicator()
+        stoch_rsi = StochRSIIndicator(close=df["Close"])
+        df["StochRSI"] = stoch_rsi.stochrsi()
         df["RSI"] = RSIIndicator(close=df["Close"]).rsi()
-        df["StochRSI"] = StochRSIIndicator(close=df["Close"]).stochrsi()
         df.dropna(inplace=True)
 
         latest = df.iloc[-1]
-        signal = "Нейтрально"
+        signal = "NEUTRAL"
         if latest["RSI"] < 30 and latest["StochRSI"] < 0.2:
             signal = "LONG"
         elif latest["RSI"] > 70 and latest["StochRSI"] > 0.8:
             signal = "SHORT"
 
-        # Кастомный стоп и тейк
         entry = latest["Close"]
-        stop = entry * (1 - stop_pct / 100) if signal == "LONG" else entry * (1 + stop_pct / 100)
-        take = entry * (1 + take_pct / 100) if signal == "LONG" else entry * (1 - take_pct / 100)
+        if signal == "LONG":
+            stop = entry * (1 - stop_pct / 100)
+            take = entry * (1 + take_pct / 100)
+        elif signal == "SHORT":
+            stop = entry * (1 + stop_pct / 100)
+            take = entry * (1 - take_pct / 100)
+        else:
+            stop = take = entry
 
-        # Прогноз уверенности
-        score = 0
-        if latest["RSI"] < 30: score += 1
-        if latest["StochRSI"] < 0.2: score += 1
-        if latest["Close"] > latest["EMA"]: score += 1
-        confidence = int((score / 3) * 100)
+        # Отображение
+        col = st.container()
+        if signal != "NEUTRAL" or show_neutral:
+            with col:
+                st.markdown(f"### {SYMBOL_NAMES[symbol]}")
+                st.markdown(f"""
+                <div style="background-color: {'#d1f7c4' if signal=='LONG' else '#ffd1d1' if signal=='SHORT' else '#f0f0f0'};
+                            padding: 10px; border-radius: 8px;">
+                    <strong>{'✅ LONG' if signal == 'LONG' else '🔻 SHORT' if signal == 'SHORT' else '⏸️ NEUTRAL'}</strong><br>
+                    <strong>Время:</strong> {df.index[-1]}<br>
+                    <strong>Цена входа:</strong> {entry:.2f}<br>
+                    <strong>Стоп-лосс:</strong> {stop:.2f}<br>
+                    <strong>Тейк-профит:</strong> {take:.2f}
+                </div>
+                """, unsafe_allow_html=True)
 
-        # Скрытие нейтральных по желанию
-        if hide_neutral and signal == "Нейтрально":
-            return
+                # График цены + StochRSI
+                fig, ax = plt.subplots(2, 1, figsize=(8, 5), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+                df["Close"].plot(ax=ax[0], label="Цена", color="black")
+                ax[0].set_title(f"{SYMBOL_NAMES[symbol]} Цена")
+                ax[0].legend()
 
-        # Цветовая заливка
-        bg_color = "#d1f7c4" if signal == "LONG" else "#f8c4c4" if signal == "SHORT" else "#eeeeee"
-        emoji = "🟢" if signal == "LONG" else "🔴" if signal == "SHORT" else "⏸️"
+                df["StochRSI"].plot(ax=ax[1], color="purple", label="StochRSI")
+                ax[1].axhline(0.8, color='red', linestyle='--')
+                ax[1].axhline(0.2, color='green', linestyle='--')
+                ax[1].set_ylim(0, 1)
+                ax[1].set_title("Stochastic RSI")
+                ax[1].legend()
 
-        # Визуальный блок сигнала
-        st.markdown(
-            f"""
-            <div style="background-color:{bg_color}; padding:15px; border-radius:10px; line-height:1.6">
-                <h3 style="margin-bottom:0;">{emoji} <b>{SYMBOL_NAMES[symbol]} - {signal}</b></h3>
-                <p style="margin:0;">🕒 <b>Время:</b> {latest.name.strftime('%Y-%m-%d %H:%M')}</p>
-                <p style="margin:0;">💰 <b>Цена входа:</b> {entry:.2f}</p>
-                <p style="margin:0;">📉 <b>Стоп:</b> {stop:.2f} &nbsp;&nbsp;&nbsp; 🎯 <b>Тейк:</b> {take:.2f}</p>
-                <p style="margin:0;">🤖 <b>Уверенность сигнала:</b> {confidence}%</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # График цены + стохастик RSI
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 4), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-        df["Close"].plot(ax=ax1, label="Цена")
-        ax1.set_title(f"{SYMBOL_NAMES[symbol]} - Цена")
-        ax1.legend()
-
-        df["StochRSI"].plot(ax=ax2, label="StochRSI", color="orange")
-        ax2.axhline(0.2, linestyle="--", color="gray", linewidth=1)
-        ax2.axhline(0.8, linestyle="--", color="gray", linewidth=1)
-        ax2.set_ylim(0, 1)
-        ax2.set_title("StochRSI")
-        ax2.legend()
-
-        st.pyplot(fig)
+                st.pyplot(fig)
 
     except Exception as e:
-        st.error(f"❌ Ошибка при анализе {symbol}: {e}")
+        st.error(f"{SYMBOL_NAMES[symbol]} — ошибка анализа: {e}")
 
-# === ОСНОВНОЙ ЦИКЛ ПО ПАРАМ ===
-for pair in PAIRS:
-    df = get_binance_data(pair, interval=TIMEFRAME, limit=150)
-    if df is None or len(df) < 60:
-        st.warning(f"⚠️ Недостаточно данных для {SYMBOL_NAMES[pair]}")
-    else:
-        analyze(df, pair)
+# Основной цикл
+if update_btn or True:
+    for pair in PAIRS:
+        df = get_data(pair, interval=TIMEFRAMES[selected_tf])
+        if df is not None:
+            analyze(df, pair)
+        else:
+            st.error(f"❌ Не удалось загрузить данные для {SYMBOL_NAMES[pair]}")
