@@ -73,8 +73,17 @@ def analyze(df):
 
 # Отображение сигналов
 for symbol, name in PAIRS.items():
-    st.markdown(f"---\n### {name}")
     df = get_data(symbol, interval=TIMEFRAMES[timeframe])
+
+    if len(df) < 50:
+        continue
+
+    signal, entry, sl, tp, df, trend = analyze(df)
+
+    if not show_neutral and signal == "⏸️ Нейтрально":
+        continue
+
+    st.markdown(f"---\n### {name}")
 
     if len(df) < 50:
         st.warning("Недостаточно данных для анализа")
