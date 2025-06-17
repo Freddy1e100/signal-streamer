@@ -2,107 +2,118 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime
 from binance.client import Client
 from ta.momentum import StochRSIIndicator, RSIIndicator
-from datetime import datetime
 
-# Binance client (без ключей, публичный)
+# Binance API (без ключей)
 client = Client()
 
-# Настройки
+# Настройки пар
 PAIRS = {
-    "BTCUSDT": "BTC/USDT",
-    "ETHUSDT": "ETH/USDT",
-    "SOLUSDT": "SOL/USDT",
-    "PAXGUSDT": "PAXG/USDT"
+    "BTCUSDT": "Bitcoin",
+    "ETHUSDT": "Ethereum",
+    "SOLUSDT": "Solana",
+    "PAXGUSDT": "PAX Gold"
 }
+
 TIMEFRAMES = {
-    "15m": "15m",
-    "1h": "1h",
-    "4h": "4h",
-    "1d": "1d"
+    "1H": "1h",
+    "4H": "4h",
+    "1D": "1d"
 }
 
-# Streamlit UI
-st.set_page_config(page_title="Crypto Signal Streamer", layout="wide")
-st.title("📡 Крипто-сигналы")
+# Интерфейс Streamlit
+st.set_page_config(page_title="📈 Crypto Signal Streamer", layout="wide")
+st.title("📡 Crypto Signal Streamer")
+st.markdown("Получайте торговые сигналы по Stoch RSI и RSI")
 
+# UI фильтры
 col1, col2, col3 = st.columns(3)
-timeframe = col1.selectbox("⏱️ Таймфрейм", list(TIMEFRAMES.keys()), index=1)
-sl_percent = col2.number_input("❌ Стоп-лосс %", min_value=0.1, max_value=20.0, value=3.0, step=0.1)
-tp_percent = col3.number_input("🎯 Тейк-профит %", min_value=0.1, max_value=50.0, value=5.0, step=0.1)
+with col1:
+    timeframe = st.selectbox("Таймфрейм", TIMEFRAMES.keys(), index=0)
+with col2:
+    stop_percent = st.number_input("Стоп-лосс %", min_value=0.5, max_value=10.0, value=3.0)
+with col3:
+    take_percent = st.number_input("Тейк-профит %", min_value=0.5, max_value=10.0, value=3.0)
 
-# Получение исторических данных с Binance
-@st.cache_data(ttl=300)
-def get_data(symbol, interval="1h", limit=200):
+show_neutral = st.checkbox("Показывать нейтральные сигналы", value=True)
+
+# Получение исторических данных
+def get_data(symbol, interval="1h", limit=150):
     klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
     df = pd.DataFrame(klines, columns=[
         "Open Time", "Open", "High", "Low", "Close", "Volume",
-        "Close Time", "Quote Volume", "Trades", "TB Base", "TB Quote", "Ignore"
+        "Close Time", "Quote Asset Volume", "Number of Trades",
+        "Taker buy base", "Taker buy quote", "Ignore"
     ])
-    df["Open Time"] = pd.to_datetime(df["Open Time"], unit="ms")
+    df["Open Time"] = pd.to_datetime(df["Open Time"], unit='ms')
     df.set_index("Open Time", inplace=True)
     df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
     return df
 
-# Анализ сигнала
+# Анализ данных
 def analyze(df):
-    stoch = StochRSIIndicator(close=df["Close"])
-    df["StochRSI"] = stoch.stochrsi()
     rsi = RSIIndicator(close=df["Close"])
+    stoch = StochRSIIndicator(close=df["Close"])
+
     df["RSI"] = rsi.rsi()
+    df["StochRSI"] = stoch.stochrsi()
     df.dropna(inplace=True)
 
     last = df.iloc[-1]
+    close_price = last["Close"]
+
     signal = "⏸️ Нейтрально"
     if last["RSI"] < 30 and last["StochRSI"] < 0.2:
         signal = "✅ LONG"
     elif last["RSI"] > 70 and last["StochRSI"] > 0.8:
         signal = "🔻 SHORT"
 
-    entry_price = round(last["Close"], 2)
-    stop_loss = round(entry_price * (1 - sl_percent / 100) if signal == "✅ LONG" else entry_price * (1 + sl_percent / 100), 2)
-    take_profit = round(entry_price * (1 + tp_percent / 100) if signal == "✅ LONG" else entry_price * (1 - tp_percent / 100), 2)
+    if signal == "✅ LONG":
+        stop_loss = round(close_price * (1 - stop_percent / 100), 2)
+        take_profit = round(close_price * (1 + take_percent / 100), 2)
+    elif signal == "🔻 SHORT":
+        stop_loss = round(close_price * (1 + stop_percent / 100), 2)
+        take_profit = round(close_price * (1 - take_percent / 100), 2)
+    else:
+        stop_loss = take_profit = close_price
 
-    # Прогноз тренда (условный)
-    trend_score = 0.5 + (0.5 * (last["StochRSI"] - 0.5)) + (0.5 * (last["RSI"] - 50) / 100)
-    trend_score = max(0, min(1, trend_score))
-    trend_text = f"📊 Прогноз тренда: {'вверх' if trend_score > 0.55 else 'вниз' if trend_score < 0.45 else 'боковик'} ({round(trend_score*100)}%)"
+    return signal, round(close_price, 2), stop_loss, take_profit, df
 
-    return signal, entry_price, stop_loss, take_profit, df, trend_text
+# Визуализация графика
+def plot_chart(df, name):
+    fig, ax1 = plt.subplots(figsize=(10, 4))
+    ax2 = ax1.twinx()
 
-# Отображение сигналов
+    ax1.plot(df.index, df["Close"], label="Цена", color="white", linewidth=1.5)
+    ax2.plot(df.index, df["StochRSI"], label="StochRSI", color="orange", linestyle="--")
+
+    ax1.set_ylabel("Цена", color="white")
+    ax2.set_ylabel("StochRSI", color="orange")
+
+    ax1.grid(True, alpha=0.3)
+    ax1.set_title(name)
+    fig.tight_layout()
+    st.pyplot(fig)
+
+# Основной цикл по парам
 for symbol, name in PAIRS.items():
-    st.markdown(f"---\n### {name}")
     df = get_data(symbol, interval=TIMEFRAMES[timeframe])
 
     if len(df) < 50:
-        st.warning("Недостаточно данных для анализа")
         continue
 
-    signal, entry, sl, tp, df, trend = analyze(df)
+    signal, entry, sl, tp, df = analyze(df)
 
-    # Вывод текста
-    st.markdown(
-        f"**Сигнал:** {signal}  \n"
-        f"💰 **Цена входа:** `{entry}`  \n"
-        f"❌ **Стоп-лосс:** `{sl}`  \n"
-        f"🎯 **Тейк-профит:** `{tp}`  \n"
-        f"{trend}  \n"
-        f"🕒 Время сигнала: `{df.index[-1]}`"
-    )
+    if not show_neutral and signal == "⏸️ Нейтрально":
+        continue
 
-    # График
-    fig, ax = plt.subplots(2, 1, figsize=(10, 5), gridspec_kw={'height_ratios': [3, 1]})
-    df["Close"].plot(ax=ax[0], label="Цена", color="black")
-    ax[0].set_title(f"{name} Цена")
-    ax[0].legend()
+    st.markdown(f"---\n### {name} ({symbol})")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("📊 Сигнал", signal)
+    col2.metric("💰 Цена входа", f"{entry}$")
+    col3.metric("📍 Стоп-лосс", f"{sl}$")
+    col4.metric("🎯 Тейк-профит", f"{tp}$")
 
-    df["StochRSI"].plot(ax=ax[1], label="StochRSI", color="purple")
-    df["RSI"].plot(ax=ax[1], label="RSI", color="green", alpha=0.6)
-    ax[1].axhline(0.2, linestyle="--", color="red", alpha=0.3)
-    ax[1].axhline(0.8, linestyle="--", color="red", alpha=0.3)
-    ax[1].legend()
-    ax[1].set_ylim(0, 100)
-    ax[1].set_title("Осцилляторы (StochRSI + RSI)")
-    st.pyplot(fig)
+    plot_chart(df, f"{name} ({symbol})")
