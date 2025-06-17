@@ -1,4 +1,10 @@
-import streamlit as st import pandas as pd import numpy as np import matplotlib.pyplot as plt from binance.client import Client from ta.momentum import StochRSIIndicator, RSIIndicator from datetime import datetime
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt from binance.client 
+import Client from ta.momentum 
+import StochRSIIndicator, RSIIndicator from datetime 
+import datetime
 
 Binance без API-ключей
 
