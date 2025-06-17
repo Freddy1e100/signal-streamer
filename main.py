@@ -102,16 +102,24 @@ for symbol, name in PAIRS.items():
     )
 
     # График
-    fig, ax = plt.subplots(2, 1, figsize=(10, 5), gridspec_kw={'height_ratios': [3, 1]})
-    df["Close"].plot(ax=ax[0], label="Цена", color="black")
-    ax[0].set_title(f"{name} Цена")
-    ax[0].legend()
+    def plot_chart(df, name):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+    
+    # Цена
+    ax1.plot(df.index, df["Close"], label="Цена", color="cyan", linewidth=1.5)
+    ax1.set_ylabel("Цена", color="cyan")
+    ax1.set_title(name, fontsize=14)
+    ax1.grid(True, alpha=0.3)
+    
+    # RSI и StochRSI
+    ax2.plot(df.index, df["RSI"], label="RSI", color="magenta", linewidth=1)
+    ax2.plot(df.index, df["StochRSI"], label="Stoch RSI", color="orange", linestyle="--", linewidth=1)
+    ax2.axhline(70, color='red', linestyle='--', linewidth=0.5)
+    ax2.axhline(30, color='green', linestyle='--', linewidth=0.5)
+    ax2.set_ylabel("RSI / StochRSI")
+    ax2.set_ylim(0, 100)
+    ax2.legend(loc="upper left")
+    ax2.grid(True, alpha=0.3)
 
-    df["StochRSI"].plot(ax=ax[1], label="StochRSI", color="purple")
-    df["RSI"].plot(ax=ax[1], label="RSI", color="green", alpha=0.6)
-    ax[1].axhline(0.2, linestyle="--", color="red", alpha=0.3)
-    ax[1].axhline(0.8, linestyle="--", color="red", alpha=0.3)
-    ax[1].legend()
-    ax[1].set_ylim(0, 100)
-    ax[1].set_title("Осцилляторы (StochRSI + RSI)")
+    fig.tight_layout()
     st.pyplot(fig)
