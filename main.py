@@ -5,15 +5,16 @@ import matplotlib.pyplot as plt
 from binance.client import Client
 from ta.momentum import StochRSIIndicator, RSIIndicator
 from datetime import datetime
+import time
 
 # Binance public client
 client = Client()
 
-# Streamlit UI
+# UI конфигурация
 st.set_page_config(layout="wide")
 st.title("📊 Signal Streamer: Крипто-сигналы на основе технического анализа")
 
-# Настройки
+# --- Сайдбар настройки ---
 PAIRS = {
     "BTCUSDT": "BTC/USDT",
     "ETHUSDT": "ETH/USDT",
@@ -21,10 +22,20 @@ PAIRS = {
     "PAXGUSDT": "PAXG/USDT"
 }
 TIMEFRAMES = {"15m": "15 минут", "1h": "1 час", "4h": "4 часа", "1d": "1 день"}
-tf_choice = st.sidebar.selectbox("⏱️ Выбери таймфрейм", list(TIMEFRAMES.keys()), format_func=lambda x: TIMEFRAMES[x])
+tf_choice = st.sidebar.selectbox("⏱️ Таймфрейм", list(TIMEFRAMES.keys()), format_func=lambda x: TIMEFRAMES[x])
 show_neutral = st.sidebar.checkbox("Показывать нейтральные сигналы", value=True)
 take_pct = st.sidebar.slider("🎯 Take-Profit (%)", 0.5, 10.0, 3.0)
 stop_pct = st.sidebar.slider("❌ Stop-Loss (%)", 0.5, 10.0, 3.0)
+refresh_minutes = st.sidebar.slider("🔁 Обновлять каждые N минут", 0, 60, 0)
+
+# Кнопка ручного обновления
+if st.button("🔄 Обновить сейчас"):
+    st.experimental_rerun()
+
+# Автообновление
+if refresh_minutes > 0:
+    st.experimental_set_query_params(auto="true")
+    st.markdown(f"<meta http-equiv='refresh' content='{refresh_minutes * 60}'>", unsafe_allow_html=True)
 
 # Получение данных
 def get_binance_data(symbol, interval="1h", limit=150):
@@ -54,10 +65,24 @@ def analyze(df):
     last = df.iloc[-1]
 
     signal = "⏸️ Нейтрально"
+    strength = "—"
+
     if last["RSI"] < 30 and last["StochRSI"] < 0.2:
         signal = "✅ LONG"
+        if last["RSI"] < 25 and last["StochRSI"] < 0.1:
+            strength = "🔥 Сильный"
+        elif last["RSI"] < 28:
+            strength = "💪 Умеренный"
+        else:
+            strength = "⚠️ Слабый"
     elif last["RSI"] > 70 and last["StochRSI"] > 0.8:
         signal = "🔻 SHORT"
+        if last["RSI"] > 75 and last["StochRSI"] > 0.9:
+            strength = "🔥 Сильный"
+        elif last["RSI"] > 72:
+            strength = "💪 Умеренный"
+        else:
+            strength = "⚠️ Слабый"
 
     entry_price = round(last["Close"], 2)
     stop = round(entry_price * (1 - stop_pct / 100), 2) if signal == "✅ LONG" else round(entry_price * (1 + stop_pct / 100), 2)
@@ -68,7 +93,7 @@ def analyze(df):
     probability = round(abs(last["RSI"] - 50) / 50 * 100, 1)
     trend = f"🧠 Прогноз: {direction} ({probability}%)"
 
-    return signal, entry_price, stop, take, df, trend
+    return signal, entry_price, stop, take, df, trend, strength
 
 # График
 def plot_chart(df, name):
@@ -99,21 +124,21 @@ def plot_chart(df, name):
     plt.tight_layout()
     st.pyplot(fig)
 
-# Основной цикл по парам
+# Основной цикл
 for symbol, name in PAIRS.items():
     df = get_binance_data(symbol, interval=tf_choice, limit=150)
     if df is None or len(df) < 50:
         st.error(f"{name}: Недостаточно данных")
         continue
 
-    signal, entry, sl, tp, df, trend = analyze(df)
+    signal, entry, sl, tp, df, trend, strength = analyze(df)
 
     if not show_neutral and signal == "⏸️ Нейтрально":
         continue
 
     st.markdown(f"---\n### {name}")
     st.markdown(
-        f"**Сигнал:** {signal}  \n"
+        f"**Сигнал:** {signal} ({strength})  \n"
         f"💰 **Цена входа:** `{entry}`  \n"
         f"❌ **Стоп-лосс:** `{sl}`  \n"
         f"🎯 **Тейк-профит:** `{tp}`  \n"
