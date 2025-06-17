@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from binance.client import Client
 from ta.momentum import StochRSIIndicator, RSIIndicator
 from datetime import datetime
-import time
 
 # Binance public client
 client = Client()
@@ -30,11 +29,10 @@ refresh_minutes = st.sidebar.slider("🔁 Обновлять каждые N ми
 
 # Кнопка ручного обновления
 if st.button("🔄 Обновить сейчас"):
-    st.experimental_rerun()
+    st.rerun()
 
 # Автообновление
 if refresh_minutes > 0:
-    st.experimental_set_query_params(auto="true")
     st.markdown(f"<meta http-equiv='refresh' content='{refresh_minutes * 60}'>", unsafe_allow_html=True)
 
 # Получение данных
@@ -50,7 +48,7 @@ def get_binance_data(symbol, interval="1h", limit=150):
         df.set_index("Open Time", inplace=True)
         df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
         return df
-    except Exception as e:
+    except Exception:
         return None
 
 # Анализ
@@ -85,8 +83,15 @@ def analyze(df):
             strength = "⚠️ Слабый"
 
     entry_price = round(last["Close"], 2)
-    stop = round(entry_price * (1 - stop_pct / 100), 2) if signal == "✅ LONG" else round(entry_price * (1 + stop_pct / 100), 2)
-    take = round(entry_price * (1 + take_pct / 100), 2) if signal == "✅ LONG" else round(entry_price * (1 - take_pct / 100), 2)
+
+    if signal == "✅ LONG":
+        stop = round(entry_price * (1 - stop_pct / 100), 2)
+        take = round(entry_price * (1 + take_pct / 100), 2)
+    elif signal == "🔻 SHORT":
+        stop = round(entry_price * (1 + stop_pct / 100), 2)
+        take = round(entry_price * (1 - take_pct / 100), 2)
+    else:
+        stop = take = entry_price
 
     # Прогноз направления
     direction = "📈 Вероятен рост" if last["RSI"] > 50 else "📉 Вероятно снижение"
@@ -124,7 +129,7 @@ def plot_chart(df, name):
     plt.tight_layout()
     st.pyplot(fig)
 
-# Основной цикл
+# Основной вывод сигналов
 for symbol, name in PAIRS.items():
     df = get_binance_data(symbol, interval=tf_choice, limit=150)
     if df is None or len(df) < 50:
